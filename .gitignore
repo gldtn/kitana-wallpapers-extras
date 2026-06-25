@@ -1,0 +1,3 @@
+# Themed wallpaper sets are generated locally from wallpapers/originals.
+/wallpapers/*/
+!/wallpapers/originals/

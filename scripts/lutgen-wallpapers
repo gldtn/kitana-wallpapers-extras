@@ -1,0 +1,238 @@
+#!/bin/bash
+
+set -euo pipefail
+
+repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+palette_dir="$repo_dir/palettes"
+source_dir="${KITANA_WALLPAPER_SOURCE_DIR:-$repo_dir/wallpapers/originals}"
+output_dir="${KITANA_WALLPAPER_OUTPUT_DIR:-$repo_dir/wallpapers}"
+level="${LUTGEN_LEVEL:-8}"
+force=0
+dry_run=0
+selected_themes=()
+
+themes=(
+  catppuccin-mocha
+  rose-pine
+  tokyo-night
+  dracula
+  kanagawa-dragon
+  cyberdream
+)
+
+declare -A lut_palettes=(
+  [catppuccin-mocha]=catppuccin-mocha
+  [rose-pine]=rose-pine
+  [tokyo-night]=tokyo-night-terminal-dark
+  [dracula]=dracula
+  [kanagawa-dragon]=kanagawa
+  [cyberdream]=cyberdream
+)
+
+usage() {
+  cat <<EOF
+Usage: scripts/lutgen-wallpapers [options]
+
+Generate lutgen-themed wallpapers into this repository.
+
+Options:
+  --all                 Generate every configured theme (default)
+  --theme THEME         Generate one theme; may be repeated
+  --source-dir DIR      Source wallpaper set (default: ./wallpapers/originals)
+  --output-dir DIR      Theme output root (default: ./wallpapers)
+  --level N             lutgen LUT level, 2-16 (default: 8)
+  --force               Regenerate files that already exist
+  --dry-run             Print planned work without writing images
+  --list-themes         Print theme-to-lutgen palette mapping
+  -h, --help            Show this help
+
+Output layout:
+  wallpapers/<theme>/<wallpaper>
+EOF
+}
+
+theme_exists() {
+  local requested="$1"
+  local theme
+
+  for theme in "${themes[@]}"; do
+    [ "$theme" = "$requested" ] && return 0
+  done
+
+  return 1
+}
+
+list_themes() {
+  local theme
+
+  for theme in "${themes[@]}"; do
+    printf '%s|%s\n' "$theme" "${lut_palettes[$theme]}"
+  done
+}
+
+validate_level() {
+  case "$level" in
+    ''|*[!0-9]*)
+      printf 'Invalid LUT level: %s\n' "$level" >&2
+      exit 1
+      ;;
+  esac
+
+  if [ "$level" -lt 2 ] || [ "$level" -gt 16 ]; then
+    printf 'Invalid LUT level: %s; expected 2-16\n' "$level" >&2
+    exit 1
+  fi
+}
+
+validate_palette() {
+  local palette="$1"
+
+  if ! LUTGEN_DIR="$palette_dir" lutgen palette "$palette" >/dev/null 2>&1; then
+    printf 'lutgen palette not found: %s\n' "$palette" >&2
+    if [ "$palette" = "cyberdream" ]; then
+      printf 'Expected Cyberdream palette at: %s/cyberdream\n' "$palette_dir" >&2
+    fi
+    exit 1
+  fi
+}
+
+generate_theme() {
+  local theme="$1"
+  local palette="$2"
+  local theme_output="$output_dir/$theme"
+  local image relative target target_dir log_file generated=0 skipped=0
+
+  if [ ! -d "$source_dir" ]; then
+    printf 'Missing source directory: %s\n' "$source_dir" >&2
+    exit 1
+  fi
+
+  mkdir -p "$theme_output"
+  printf 'Generating %s with lutgen palette %s\n' "$theme" "$palette"
+
+  while IFS= read -r -d '' image; do
+    relative="${image#"$source_dir"/}"
+    target="$theme_output/$relative"
+    target_dir="$(dirname "$target")"
+
+    if [ -e "$target" ] && [ "$force" -eq 0 ]; then
+      skipped=$((skipped + 1))
+      continue
+    fi
+
+    generated=$((generated + 1))
+    if [ "$dry_run" -eq 1 ]; then
+      printf 'Would generate: %s -> %s\n' "$image" "$target"
+      continue
+    fi
+
+    mkdir -p "$target_dir"
+    log_file="$(mktemp)"
+    if ! LUTGEN_DIR="$palette_dir" lutgen apply \
+      -o "$target_dir" \
+      -p "$palette" \
+      -l "$level" \
+      -P "$image" >"$log_file" 2>&1; then
+      printf 'lutgen failed for: %s\n' "$image" >&2
+      while IFS= read -r line; do
+        printf '%s\n' "$line" >&2
+      done <"$log_file"
+      rm -f "$log_file"
+      exit 1
+    fi
+    rm -f "$log_file"
+  done < <(find "$source_dir" -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.webp' -o -iname '*.avif' \) -print0 | sort -z)
+
+  printf '%s: generated %s, skipped %s\n' "$theme" "$generated" "$skipped"
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --all)
+      selected_themes=()
+      ;;
+    --theme)
+      if [ "$#" -lt 2 ]; then
+        printf 'Missing value for --theme\n' >&2
+        exit 1
+      fi
+      selected_themes+=("$2")
+      shift
+      ;;
+    --source-dir)
+      if [ "$#" -lt 2 ]; then
+        printf 'Missing value for --source-dir\n' >&2
+        exit 1
+      fi
+      source_dir="$2"
+      shift
+      ;;
+    --output-dir)
+      if [ "$#" -lt 2 ]; then
+        printf 'Missing value for --output-dir\n' >&2
+        exit 1
+      fi
+      output_dir="$2"
+      shift
+      ;;
+    --level)
+      if [ "$#" -lt 2 ]; then
+        printf 'Missing value for --level\n' >&2
+        exit 1
+      fi
+      level="$2"
+      shift
+      ;;
+    --force)
+      force=1
+      ;;
+    --dry-run)
+      dry_run=1
+      ;;
+    --list-themes)
+      list_themes
+      exit 0
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      printf 'Unknown option: %s\n' "$1" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+  shift
+done
+
+if [ "${#selected_themes[@]}" -eq 0 ]; then
+  selected_themes=("${themes[@]}")
+fi
+
+command -v lutgen >/dev/null 2>&1 || {
+  printf 'lutgen is required but was not found on PATH.\n' >&2
+  exit 1
+}
+
+validate_level
+
+for theme in "${selected_themes[@]}"; do
+  if ! theme_exists "$theme"; then
+    printf 'Unknown theme: %s\n' "$theme" >&2
+    printf 'Available themes:\n' >&2
+    list_themes >&2
+    exit 1
+  fi
+done
+
+for theme in "${selected_themes[@]}"; do
+  palette="${lut_palettes[$theme]-}"
+  if [ -z "$palette" ]; then
+    printf 'No lutgen palette configured for theme: %s\n' "$theme" >&2
+    exit 1
+  fi
+
+  validate_palette "$palette"
+  generate_theme "$theme" "$palette"
+done

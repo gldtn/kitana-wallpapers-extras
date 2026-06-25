@@ -1,0 +1,118 @@
+#!/bin/bash
+
+set -euo pipefail
+
+repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+kitana_config="$HOME/.config/kitana/config"
+env_wallpaper_dir="${KITANA_WALLPAPER_DIR:-}"
+state_dir="$HOME/.config/kitana"
+active_set_file="$state_dir/wallpaper-set"
+quiet=0
+set_name="originals"
+source_dir=""
+
+usage() {
+  cat <<EOF
+Usage: scripts/use-wallpaper-set [SET]
+
+Expose one wallpaper set to Kitana's flat dashboard wallpaper directory.
+
+Sets live under: wallpapers/<set>
+Default set: originals
+
+Options:
+  --quiet    Suppress normal status output
+EOF
+}
+
+log() {
+  [ "$quiet" -eq 1 ] || printf '%s\n' "$*"
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --quiet)
+      quiet=1
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --*)
+      printf 'Unknown option: %s\n' "$1" >&2
+      usage >&2
+      exit 1
+      ;;
+    *)
+      set_name="$1"
+      ;;
+  esac
+  shift
+done
+
+source_dir="$repo_dir/wallpapers/$set_name"
+
+if [ -f "$kitana_config" ]; then
+  # shellcheck disable=SC1090
+  source "$kitana_config"
+fi
+
+wallpaper_dir="${env_wallpaper_dir:-${KITANA_WALLPAPER_DIR:-$HOME/.config/kitana/wallpapers}}"
+
+if [ ! -d "$source_dir" ]; then
+  printf 'Wallpaper set not found: %s\n' "$set_name" >&2
+  printf 'Available sets:\n' >&2
+  for set_dir in "$repo_dir"/wallpapers/*; do
+    [ -d "$set_dir" ] || continue
+    printf '  %s\n' "$(basename "$set_dir")" >&2
+  done
+  exit 1
+fi
+
+mkdir -p "$wallpaper_dir" "$state_dir"
+
+set_is_active() {
+  local wallpaper target
+
+  [ -f "$active_set_file" ] || return 1
+  [ "$(<"$active_set_file")" = "$set_name" ] || return 1
+
+  while IFS= read -r -d '' wallpaper; do
+    target="$wallpaper_dir/$(basename "$wallpaper")"
+    [ -L "$target" ] || return 1
+    [ "$(readlink -f "$target" 2>/dev/null || true)" = "$wallpaper" ] || return 1
+  done < <(find "$source_dir" -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.webp' -o -iname '*.gif' -o -iname '*.avif' \) -print0 | sort -z)
+
+  return 0
+}
+
+if set_is_active; then
+  log "Wallpaper set already active: $set_name"
+  exit 0
+fi
+
+for wallpaper_link in "$wallpaper_dir"/*; do
+  [ -L "$wallpaper_link" ] || continue
+  link_target="$(readlink -f "$wallpaper_link" 2>/dev/null || true)"
+  case "$link_target" in
+    "$repo_dir"/wallpapers/*)
+      rm -f "$wallpaper_link"
+      ;;
+  esac
+done
+
+linked=0
+kept=0
+while IFS= read -r -d '' wallpaper; do
+  target="$wallpaper_dir/$(basename "$wallpaper")"
+  if [ ! -e "$target" ] || [ -L "$target" ]; then
+    ln -sfn "$wallpaper" "$target"
+    linked=$((linked + 1))
+  else
+    log "Keeping existing wallpaper: $target"
+    kept=$((kept + 1))
+  fi
+done < <(find "$source_dir" -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.webp' -o -iname '*.gif' -o -iname '*.avif' \) -print0 | sort -z)
+
+printf '%s\n' "$set_name" >"$active_set_file"
+log "Wallpaper set active: $set_name ($linked linked, $kept kept)"
