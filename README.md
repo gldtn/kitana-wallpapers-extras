@@ -14,6 +14,13 @@ Kitana can install this pack during setup with:
 KITANA_EXTRAS=walls bash ~/.local/share/kitana/install.sh
 ```
 
+Generate local themed sets during install with:
+
+```bash
+KITANA_GENERATE_WALLPAPERS=1 bash install.sh
+KITANA_EXTRAS=walls KITANA_GENERATE_WALLPAPERS=1 bash ~/.local/share/kitana/install.sh
+```
+
 The installer symlinks `wallpapers/originals` into `~/.config/kitana/wallpapers`.
 
 ## Themed wallpapers
@@ -60,6 +67,7 @@ Install a specific set with:
 
 ```bash
 KITANA_WALLPAPER_SET=rose-pine bash install.sh
+KITANA_GENERATE_WALLPAPERS=1 KITANA_WALLPAPER_SET=rose-pine bash install.sh
 ```
 
 When this repository exists at `~/.local/share/kitana-wallpapers-extras`, `kitana-theme` switches to the matching wallpaper set and reapplies the themed version of the current wallpaper filename when it exists.
